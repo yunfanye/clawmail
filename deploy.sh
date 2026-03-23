@@ -370,6 +370,15 @@ prepare_database() {
   fi
 }
 
+ensure_http_https_firewall_access() {
+  require_command sudo
+  require_command ufw
+
+  log "Allowing inbound TCP ports 80 and 443 with ufw"
+  sudo -n ufw allow 80/tcp
+  sudo -n ufw allow 443/tcp
+}
+
 detect_public_ipv4() {
   local ip=""
   local url
@@ -440,6 +449,121 @@ ${SMTP_BANNER_HOSTNAME} {
 EOF
 }
 
+print_dns_setup_instructions() {
+  local server_ip="${SERVER_IP:-your-server-ip}"
+  local app_domain="${APP_DOMAIN:-example.com}"
+  local www_domain="${APP_WWW_DOMAIN:-}"
+  local smtp_host="${SMTP_BANNER_HOSTNAME:-mx.${app_domain}}"
+
+  cat >&2 <<EOF
+
+Setup is waiting for DNS before it can finish configuring TLS.
+
+Caddy could not find an issued certificate for ${smtp_host} yet. That usually means the public DNS records do not point at this server, so ACME/Let's Encrypt cannot validate the hostnames.
+
+Create these DNS records with your DNS provider:
+EOF
+
+  printf '  %-5s %-30s %-8s %s\n' "TYPE" "NAME" "PRIORITY" "VALUE" >&2
+  printf '  %-5s %-30s %-8s %s\n' "-----" "------------------------------" "--------" "---------------------------" >&2
+  printf '  %-5s %-30s %-8s %s\n' "A" "$app_domain" "-" "$server_ip" >&2
+
+  if [[ -n "$www_domain" && "$www_domain" != "$app_domain" ]]; then
+    printf '  %-5s %-30s %-8s %s\n' "A" "$www_domain" "-" "$server_ip" >&2
+  fi
+
+  printf '  %-5s %-30s %-8s %s\n' "A" "$smtp_host" "-" "$server_ip" >&2
+  printf '  %-5s %-30s %-8s %s\n' "MX" "$app_domain" "10" "${smtp_host}." >&2
+  printf '\n' >&2
+
+  cat >&2 <<EOF
+Then wait for DNS propagation and confirm the records resolve to this server:
+
+  dig +short ${app_domain}
+EOF
+
+  if [[ -n "$www_domain" && "$www_domain" != "$app_domain" ]]; then
+    cat >&2 <<EOF
+  dig +short ${www_domain}
+EOF
+  fi
+
+  cat >&2 <<EOF
+  dig +short ${smtp_host}
+  dig +short MX ${app_domain}
+
+When those look correct, rerun:
+
+  ./deploy.sh setup
+
+EOF
+}
+
+print_caddy_cert_setup_diagnostics() {
+  local host="$1"
+  local log_output=""
+  local host_lines=""
+  local retry_after=""
+
+  if ! command -v journalctl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  log_output="$(journalctl -u caddy --no-pager -n 200 2>/dev/null || true)"
+  [[ -n "$log_output" ]] || return 1
+
+  host_lines="$(printf '%s\n' "$log_output" | grep -F "$host" || true)"
+  [[ -n "$host_lines" ]] || return 1
+
+  retry_after="$(
+    printf '%s\n' "$host_lines" \
+      | sed -n 's/.*retry after \([^"]*\): see.*/\1/p' \
+      | tail -n 1
+  )"
+
+  if printf '%s\n' "$host_lines" | grep -q 'rateLimited'; then
+    cat >&2 <<EOF
+
+Setup is waiting for a Caddy-managed certificate for ${host}, but the ACME issuer has rate-limited recent validation attempts.
+EOF
+
+    if [[ -n "$retry_after" ]]; then
+      cat >&2 <<EOF
+
+The current retry window reported by Caddy ends after:
+
+  ${retry_after}
+EOF
+    fi
+
+    cat >&2 <<EOF
+
+This usually means the hostname failed validation several times earlier. If the DNS now looks correct, wait until that retry time passes and rerun:
+
+  ./deploy.sh setup
+
+Recent Caddy log lines for ${host}:
+EOF
+    printf '%s\n' "$host_lines" | tail -n 6 >&2
+    printf '\n' >&2
+    return 0
+  fi
+
+  if printf '%s\n' "$host_lines" | grep -q 'trying to solve challenge'; then
+    cat >&2 <<EOF
+
+Setup is still waiting for Caddy to complete ACME validation for ${host}.
+
+Recent Caddy log lines for ${host}:
+EOF
+    printf '%s\n' "$host_lines" | tail -n 6 >&2
+    printf '\n' >&2
+    return 0
+  fi
+
+  return 1
+}
+
 render_caddyfile() {
   local rendered="$1"
   local site_addresses="$APP_DOMAIN"
@@ -489,7 +613,7 @@ configure_caddy() {
   rendered="$(mktemp)"
 
   render_caddyfile "$rendered"
-  caddy validate --config "$rendered"
+  caddy validate --config "$rendered" --adapter caddyfile
   install_file "$rendered" "$CADDYFILE_PATH"
   rm -f "$rendered"
 
@@ -556,7 +680,8 @@ setup_smtp_certs_from_caddy() {
   done
 
   if (( ${#cert_pair[@]} != 2 )); then
-    echo "Could not locate a Caddy-managed certificate for $SMTP_BANNER_HOSTNAME. Ensure DNS for that host points to this server, then rerun './deploy.sh setup'." >&2
+    print_caddy_cert_setup_diagnostics "$SMTP_BANNER_HOSTNAME" || true
+    print_dns_setup_instructions
     exit 1
   fi
 
@@ -575,6 +700,7 @@ setup_smtp_certs_from_caddy() {
 
 validate_env() {
   local require_smtp_files="${1:-false}"
+  local allow_missing_smtp_files="${2:-false}"
   CHECK_ERRORS=0
   CHECK_WARNINGS=0
 
@@ -666,7 +792,7 @@ validate_env() {
         check_error "SMTP TLS key file not found at ${SMTP_TLS_KEY_PATH}"
       fi
     fi
-  elif [[ "$require_smtp_files" == "true" || "${NODE_ENV:-development}" == "production" ]]; then
+  elif [[ "$require_smtp_files" == "true" || ("${NODE_ENV:-development}" == "production" && "$allow_missing_smtp_files" != "true") ]]; then
     check_error "SMTP TLS paths are not configured"
   else
     check_warn "SMTP TLS paths are not configured"
@@ -705,10 +831,11 @@ deploy_app() {
 }
 
 run_setup() {
+  ensure_http_https_firewall_access
   ensure_server_ip
   ensure_dkim_encryption_key
   prepare_database
-  validate_env false
+  validate_env false true
 
   if is_enabled "$CONFIGURE_CADDY"; then
     log "Rendering Caddy configuration"
