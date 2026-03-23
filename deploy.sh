@@ -624,18 +624,64 @@ find_caddy_cert_pair() {
   local host="$1"
   local root
 
+  caddy_path_is_file() {
+    local path="$1"
+
+    if [[ -f "$path" ]]; then
+      return 0
+    fi
+
+    sudo test -f "$path"
+  }
+
+  cert_matches_host() {
+    local cert="$1"
+    local host="$2"
+    local cert_info=""
+
+    if [[ -r "$cert" ]]; then
+      cert_info="$(openssl x509 -in "$cert" -noout -ext subjectAltName -subject 2>/dev/null || true)"
+    else
+      cert_info="$(sudo openssl x509 -in "$cert" -noout -ext subjectAltName -subject 2>/dev/null || true)"
+    fi
+
+    [[ -n "$cert_info" ]] || return 1
+
+    if printf '%s\n' "$cert_info" | grep -Fq "DNS:$host"; then
+      return 0
+    fi
+
+    if printf '%s\n' "$cert_info" | grep -Eq "subject=.*CN ?= ?${host//./\\.}([,/]|$)"; then
+      return 0
+    fi
+
+    return 1
+  }
+
+  find_caddy_cert_candidates() {
+    local root="$1"
+
+    if [[ -x "$root" ]]; then
+      find "$root" -type f -path "*/certificates/*/*.crt" 2>/dev/null || true
+    else
+      sudo find "$root" -type f -path "*/certificates/*/*.crt" 2>/dev/null || true
+    fi
+  }
+
   while IFS= read -r root; do
     [[ -n "$root" && -d "$root" ]] || continue
 
     local cert
-    cert="$(find "$root" -type f -path "*/certificates/*/$host/$host.crt" -print -quit 2>/dev/null || true)"
-    if [[ -n "$cert" ]]; then
+    while IFS= read -r cert; do
+      [[ -n "$cert" ]] || continue
+      cert_matches_host "$cert" "$host" || continue
+
       local key="${cert%.crt}.key"
-      if [[ -f "$key" ]]; then
+      if caddy_path_is_file "$key"; then
         printf '%s\n%s\n' "$cert" "$key"
         return 0
       fi
-    fi
+    done < <(find_caddy_cert_candidates "$root")
   done < <(
     printf '%s\n' \
       "${CADDY_DATA_DIR:-}" \
