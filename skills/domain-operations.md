@@ -142,7 +142,28 @@ Back off and retry after rate limit errors.
 
 ---
 
+## Secret Storage
+
+By default, save domain credentials to `~/.clawmail/domain_secrets.csv` (create the file and directory if they don't exist). Format: one line per domain, pipe-separated:
+
+```
+domain,token
+```
+
+Example:
+```
+example.com,cmvt_x9y8z7...
+```
+
+---
+
 ## Credential Handling
 
 - `verification_token` is a secret. Never log or expose it.
 - `inbox_creation_key` values are one-time use. Generate a new one for each inbox.
+
+---
+
+## See Also
+
+For inbox-level operations (reading, sending, replying, archiving emails, and downloading attachments), see [`skills/inbox-operations.md`](https://github.com/yunfanye/clawmail/blob/main/skills/inbox-operations.md).

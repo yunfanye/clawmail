@@ -139,8 +139,29 @@ Back off and retry after rate limit errors. Do not retry immediately.
 
 ---
 
+## Secret Storage
+
+By default, save inbox credentials to `~/.clawmail/inbox_secrets.csv` (create the file and directory if they don't exist). Format: one line per inbox, pipe-separated:
+
+```
+inbox,token
+```
+
+Example:
+```
+agent@example.com,cm_a1b2c3d4...
+```
+
+---
+
 ## Operational Notes
 
 - **Credential handling**: The `api_key` is a secret. Never log or expose it.
 - **Storage quota**: Each inbox has a 500 MiB quota. If the quota is full, inbound deliveries are rejected.
 - **Catch-all**: Mail to unknown local parts goes to `catchall@<domain>`. Provision that inbox to read catch-all mail.
+
+---
+
+## See Also
+
+For domain-level operations (domain registration, DNS verification, inbox provisioning, and forwarding rules), see [`skills/domain-operations.md`](https://github.com/yunfanye/clawmail/blob/main/skills/domain-operations.md).
