@@ -47,7 +47,7 @@ function startSmtpServer() {
     if (err.code === 'EACCES' && config.smtpPort < 1024) {
       logger.error(
         { err, port: config.smtpPort },
-        'SMTP port requires elevated privileges. Use a port >= 1024 (for example 2525) or grant bind permission to the process'
+        'SMTP port requires elevated privileges. Use a port >= 1024 (for example 25 is privileged; use a high port only for local development) or grant bind permission to the process'
       );
       return;
     }

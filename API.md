@@ -486,7 +486,7 @@ Inbox email routes are rate-limited by client IP by default. Set `INBOX_RATE_LIM
 
 The server listens on `SMTP_PORT` for inbound SMTP.
 
-- Default `SMTP_PORT` is `2525`
+- Default `SMTP_PORT` is `25`
 - Maximum inbound message size is `25 MiB`
 - Only verified domains are accepted at RCPT time
 - Inbound mail for an explicitly provisioned inbox is stored in that inbox

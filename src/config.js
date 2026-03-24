@@ -63,7 +63,7 @@ module.exports = {
   serverIp: process.env.SERVER_IP || '203.0.113.10',
   mxServerDomainName: process.env.MX_SERVER_DOMAIN_NAME || 'mx',
   smtpBannerHostname: deriveFromAppDomain(process.env.SMTP_BANNER_HOSTNAME, (appDomain) => `mx.${appDomain}`),
-  smtpPort: parsePositiveInt(process.env.SMTP_PORT, 2525),
+  smtpPort: parsePositiveInt(process.env.SMTP_PORT, 25),
   smtpTlsKeyPath: process.env.SMTP_TLS_KEY_PATH || '',
   smtpTlsCertPath: process.env.SMTP_TLS_CERT_PATH || '',
   logLevel: process.env.LOG_LEVEL || 'info',
